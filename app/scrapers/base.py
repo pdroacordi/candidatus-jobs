@@ -20,3 +20,4 @@ class BaseScraper(ABC):
     async def scrape(self) -> list[RawJob]:
         """Fetch and return raw job listings from the source."""
         ...
+

@@ -12,10 +12,7 @@ MAX_JOBS_PER_QUERY = 10
 
 class IndeedScraper(BaseScraper):
     async def scrape(self) -> list[RawJob]:
-        try:
-            from playwright.async_api import async_playwright
-        except ImportError:
-            return []
+        from playwright.async_api import async_playwright
 
         jobs: dict[str, RawJob] = {}
         async with async_playwright() as p:

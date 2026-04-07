@@ -1,7 +1,10 @@
 from logging.config import fileConfig
+from dotenv import load_dotenv
 from sqlalchemy import pool
 from alembic import context
 import os
+
+load_dotenv()
 
 config = context.config
 

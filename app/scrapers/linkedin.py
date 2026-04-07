@@ -15,15 +15,12 @@ SEARCH_QUERIES = [
     "data engineer",
     "fullstack developer",
 ]
-MAX_JOBS_PER_QUERY = 10  # Keep small to avoid blocks
+MAX_JOBS_PER_QUERY = 10
 
 
 class LinkedInScraper(BaseScraper):
     async def scrape(self) -> list[RawJob]:
-        try:
-            from playwright.async_api import async_playwright
-        except ImportError:
-            return []
+        from playwright.async_api import async_playwright
 
         jobs: dict[str, RawJob] = {}
         async with async_playwright() as p:
@@ -66,7 +63,7 @@ class LinkedInScraper(BaseScraper):
                             jobs[href] = RawJob(
                                 title=title,
                                 company=company,
-                                description=title,  # description requires extra page load — skipped to avoid bans
+                                description=title,
                                 url=href,
                                 location=location,
                                 remote="remote" in (location or "").lower(),
