@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, Query, HTTPException
@@ -12,7 +13,7 @@ from app.models import Job
 from app.recommender import compute_match_score
 from app.schemas import JobOut, JobRecommended, JobsPage
 from app.scheduler import start_scheduler, stop_scheduler
-from app.scrape_runner import run_all_scrapers
+from app.scrape_runner import run_all_scrapers, mark_stale
 
 logging.basicConfig(level=logging.INFO)
 
@@ -24,23 +25,46 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-app = FastAPI(title="Candidatus Jobs API", lifespan=lifespan)
+app = FastAPI(
+    title="Candidatus Jobs API",
+    description=(
+        "Aggregates job listings scraped from LinkedIn, Indeed, Gupy, Remotive, and Arbeitnow. "
+        "Provides filtering, full-text search, and skill-based recommendation.\n\n"
+        "All endpoints except `/health` require an `X-API-Key` header."
+    ),
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 
-@app.get("/health")
+@app.get(
+    "/health",
+    summary="Health check",
+    tags=["System"],
+)
 def health():
     return {"status": "ok"}
 
 
-@app.get("/jobs", response_model=JobsPage, dependencies=[Depends(require_api_key)])
+@app.get(
+    "/jobs",
+    response_model=JobsPage,
+    summary="List jobs",
+    description=(
+        "Returns a paginated list of active job listings. "
+        "Supports filtering by remote, seniority level, source platform, skill, and free-text search."
+    ),
+    tags=["Jobs"],
+    dependencies=[Depends(require_api_key)],
+)
 def list_jobs(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    search: str | None = Query(None),
-    remote: bool | None = Query(None),
-    level: str | None = Query(None),
-    source: str | None = Query(None),
-    skill: str | None = Query(None),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(20, ge=1, le=100, description="Results per page"),
+    search: str | None = Query(None, description="Free-text search on title and company"),
+    remote: bool | None = Query(None, description="Filter by remote availability"),
+    level: str | None = Query(None, description="Filter by seniority level (e.g. `junior`, `senior`)"),
+    source: str | None = Query(None, description="Filter by source platform (e.g. `linkedin`, `gupy`)"),
+    skill: str | None = Query(None, description="Filter jobs that require this skill"),
     db: Session = Depends(get_db),
 ):
     q = db.query(Job).filter(Job.is_active == True)  # noqa: E712
@@ -63,10 +87,20 @@ def list_jobs(
     return JobsPage(total=total, page=page, page_size=page_size, items=items)
 
 
-@app.get("/jobs/recommended", response_model=list[JobRecommended], dependencies=[Depends(require_api_key)])
+@app.get(
+    "/jobs/recommended",
+    response_model=list[JobRecommended],
+    summary="Skill-based job recommendations",
+    description=(
+        "Returns the top N jobs ranked by skill overlap with the provided skill list. "
+        "Only jobs that have at least one extracted skill are considered."
+    ),
+    tags=["Jobs"],
+    dependencies=[Depends(require_api_key)],
+)
 def recommended_jobs(
-    skills: list[str] = Query(...),
-    limit: int = Query(10, ge=1, le=50),
+    skills: list[str] = Query(..., description="Skills to match against (repeat the param for multiple)"),
+    limit: int = Query(10, ge=1, le=50, description="Maximum number of results"),
     db: Session = Depends(get_db),
 ):
     if not skills:
@@ -87,9 +121,18 @@ def recommended_jobs(
     ]
 
 
-@app.get("/jobs/{job_id}", response_model=JobOut, dependencies=[Depends(require_api_key)])
+@app.get(
+    "/jobs/{job_id}",
+    response_model=JobOut,
+    summary="Get a job by ID",
+    tags=["Jobs"],
+    responses={
+        400: {"description": "Invalid UUID format"},
+        404: {"description": "Job not found or inactive"},
+    },
+    dependencies=[Depends(require_api_key)],
+)
 def get_job(job_id: str, db: Session = Depends(get_db)):
-    import uuid
     try:
         uid = uuid.UUID(job_id)
     except ValueError:
@@ -100,14 +143,25 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
     return job
 
 
-@app.delete("/jobs/stale", dependencies=[Depends(require_api_key)])
+@app.delete(
+    "/jobs/stale",
+    summary="Mark stale jobs inactive",
+    description="Deactivates job listings that have not been seen in recent scrape runs.",
+    tags=["Jobs"],
+    dependencies=[Depends(require_api_key)],
+)
 def delete_stale(db: Session = Depends(get_db)):
-    from app.scrape_runner import mark_stale
     mark_stale(db)
     return {"message": "Stale jobs marked inactive"}
 
 
-@app.post("/scrape/trigger", dependencies=[Depends(require_api_key)])
+@app.post(
+    "/scrape/trigger",
+    summary="Trigger a scrape run",
+    description="Starts a full scrape across all configured sources in the background.",
+    tags=["Scraping"],
+    dependencies=[Depends(require_api_key)],
+)
 async def trigger_scrape():
     asyncio.create_task(run_all_scrapers())
     return {"message": "Scrape started in background"}
